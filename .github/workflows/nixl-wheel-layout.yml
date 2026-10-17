@@ -1,0 +1,70 @@
+name: nixl wheel layout diagnostic
+
+on:
+  workflow_dispatch:
+
+jobs:
+  wheel-layout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libhwloc-dev \
+            libnuma-dev \
+            pybind11-dev \
+            python3-dev \
+            pkg-config
+
+      - name: Build libfabric 2.7 from source
+        run: |
+          curl -fsSL -O \
+            https://github.com/ofiwg/libfabric/releases/download/v2.7.0/libfabric-2.7.0.tar.bz2
+          tar -xf libfabric-2.7.0.tar.bz2
+          cd libfabric-2.7.0
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Build the wheel with the image build's exact options
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip wheel --no-deps \
+            --config-settings=setup-args=-Denable_plugins=LIBFABRIC \
+            -w /tmp/wheels .
+          echo "=== WHEEL: plugin/so entries ==="
+          unzip -l /tmp/wheels/*.whl | grep -Ei "plugin|\.so" || echo "NO so/plugin entries in wheel"
+          echo "=== WHEEL: total ==="
+          unzip -l /tmp/wheels/*.whl | tail -1
+
+      - name: Install and diagnose
+        run: |
+          /tmp/venv/bin/pip install --no-deps /tmp/wheels/*.whl
+          cp -r src/bindings/python/nixl-meta /tmp/nixl-meta
+          cp LICENSE /tmp/nixl-meta/
+          sed -e 's/@VERSION@/1.6.0/g' -e 's/@WHEEL_DEPS@/"nixl-cu12==1.6.0"/' /tmp/nixl-meta/pyproject.toml.in > /tmp/nixl-meta/pyproject.toml
+          /tmp/venv/bin/pip install --no-deps /tmp/nixl-meta
+          cat > /tmp/diag.py <<'PYEOF'
+          import glob, re, sysconfig
+          import importlib.util, importlib.metadata as im
+          sp = sysconfig.get_paths()["purelib"]
+          print("site-packages:", sp)
+          print("nixl-cu12:", im.version("nixl-cu12"), "| nixl:", im.version("nixl"))
+          plugins = glob.glob(sp + "/**/libplugin_*", recursive=True)
+          print("ALL installed plugins:", plugins)
+          for p in plugins:
+              blob = open(p, "rb").read()
+              print("---", p, len(blob), "bytes")
+              for marker in [b"re-established its side", b"Handshake stored", b"Handshake from peer"]:
+                  print("  marker", marker.decode(), "->", marker in blob)
+              for lit in sorted(set(re.findall(rb"[\x20-\x7e]{6,}[Hh]andshake[\x20-\x7e]*", blob))):
+                  print("  literal:", lit.decode())
+          import nixl
+          print("import nixl OK:", importlib.util.find_spec("nixl").origin)
+          PYEOF
+          /tmp/venv/bin/python /tmp/diag.py

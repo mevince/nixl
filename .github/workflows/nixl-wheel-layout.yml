@@ -46,6 +46,7 @@ jobs:
 
       - name: Install and diagnose
         run: |
+          /tmp/venv/bin/pip install numpy
           /tmp/venv/bin/pip install --no-deps /tmp/wheels/*.whl
           cp -r src/bindings/python/nixl-meta /tmp/nixl-meta
           cp LICENSE /tmp/nixl-meta/
@@ -57,7 +58,7 @@ jobs:
           sp = sysconfig.get_paths()["purelib"]
           print("site-packages:", sp)
           print("nixl-cu12:", im.version("nixl-cu12"), "| nixl:", im.version("nixl"))
-          plugins = glob.glob(sp + "/**/libplugin_*", recursive=True)
+          plugins = glob.glob(sp + "/**/libplugin_*", recursive=True, include_hidden=True)
           print("ALL installed plugins:", plugins)
           for p in plugins:
               blob = open(p, "rb").read()

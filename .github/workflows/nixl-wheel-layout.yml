@@ -1,6 +1,8 @@
 name: nixl wheel layout diagnostic
 
 on:
+  push:
+    branches: [qa/wheel-layout]
   workflow_dispatch:
 
 jobs:

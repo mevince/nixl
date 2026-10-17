@@ -1,0 +1,47 @@
+# Temporary: run the libfabric backend unit test on this branch. This file
+# lives on the verification fork and is dropped before the upstream PR.
+
+name: libfabric backend unit test
+
+on:
+  push:
+    branches: [fix/libfabric-reestablish-reply]
+  workflow_dispatch:
+
+jobs:
+  libfabric-backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libhwloc-dev \
+            libnuma-dev \
+            pybind11-dev \
+            python3-dev \
+            meson \
+            ninja-build \
+            pkg-config
+
+      # nixl main requires libfabric >= 2.x (e.g. FI_OPT_SHARED_MEMORY_PERMITTED
+      # in libfabric_rail.cpp); Ubuntu 24.04's libfabric-dev (1.22) is too old.
+      - name: Build libfabric 2.7 from source
+        run: |
+          curl -fsSL -O \
+            https://github.com/ofiwg/libfabric/releases/download/v2.7.0/libfabric-2.7.0.tar.bz2
+          tar -xf libfabric-2.7.0.tar.bz2
+          cd libfabric-2.7.0
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Build and run libfabric_backend_test
+        run: |
+          meson setup build -Denable_plugins=LIBFABRIC -Dbuild_tests=true -Dbuildtype=debug
+          meson compile -C build
+          meson test -C build libfabric_backend_test --repeat=25 --print-errorlogs
